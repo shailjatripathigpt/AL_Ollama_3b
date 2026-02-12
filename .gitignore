@@ -1,0 +1,25 @@
+# virtual env
+.venv/
+__pycache__/
+*.pyc
+
+# datasets
+*.faiss
+*.jsonl
+embeddings/
+chunks/
+data/
+normalized/
+
+# OS
+.DS_Store
+
+# logs
+*.log
+rag_history/
+
+# models cache
+*.cache
+.cache/
+
+
