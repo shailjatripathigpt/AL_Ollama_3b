@@ -1,9 +1,10 @@
+
 # app.py
 """
 Streamlit UI for your RAG (FAISS + Ollama llama3:8b) with:
 ✅ Ask question -> Top chunks -> Answer (identical to CLI script)
 ✅ Saves history to PROJECT_ROOT/rag_history/rag_history.jsonl
-✅ Auto‑downloads missing RAG files from Google Drive
+✅ Auto‑downloads missing RAG files from Google Drive (with robust error checking)
 
 UI extras added (NO change to RAG functionality):
 ✅ Fixed-height scrollable chat box
@@ -45,10 +46,10 @@ GDRIVE_FILES = {
 
 
 # =========================
-# DOWNLOAD HELPER (added)
+# DOWNLOAD HELPER (enhanced)
 # =========================
 def download_from_gdrive(file_id: str, dest_path: Path) -> None:
-    """Download a file from Google Drive using gdown."""
+    """Download a file from Google Drive using gdown. Verify after download."""
     try:
         import gdown
     except ImportError:
@@ -62,20 +63,35 @@ def download_from_gdrive(file_id: str, dest_path: Path) -> None:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     url = f"https://drive.google.com/uc?id={file_id}"
-    with st.spinner(f"Downloading {dest_path.name} ..."):
-        gdown.download(url, str(dest_path), quiet=False)
+    try:
+        with st.spinner(f"Downloading {dest_path.name} ..."):
+            # fuzzy=True helps handle Google Drive confirmation pages
+            gdown.download(url, str(dest_path), quiet=False, fuzzy=True)
+    except Exception as e:
+        raise RuntimeError(f"Download failed for {dest_path.name}: {e}")
+
+    # Verify the file was actually created and has content
+    if not dest_path.exists():
+        raise RuntimeError(f"Download completed but file not found: {dest_path}")
+    if dest_path.stat().st_size == 0:
+        raise RuntimeError(f"Downloaded file is empty: {dest_path}")
 
 
 def ensure_rag_files(project_root: Path) -> None:
-    """Check if all required RAG files exist; download missing ones from Google Drive."""
+    """Check if all required RAG files exist; download missing ones from Google Drive.
+    If any download fails, display a Streamlit error and stop the app."""
     for rel_path, file_id in GDRIVE_FILES.items():
         full_path = project_root / rel_path
-        if not full_path.exists():
-            st.info(f"Missing {rel_path} – downloading from Google Drive...")
+        if full_path.exists():
+            continue  # already present
+
+        st.info(f"📥 Missing {rel_path} – downloading from Google Drive...")
+        try:
             download_from_gdrive(file_id, full_path)
-        else:
-            # Optional: you could add a size check here, but for now just pass
-            pass
+            st.success(f"✅ Downloaded {rel_path}")
+        except Exception as e:
+            st.error(f"❌ Failed to download {rel_path}:\n{e}")
+            st.stop()  # halt the app
 
 
 # =========================
@@ -593,13 +609,13 @@ def main():
     project_root = find_project_root(script_dir)
     history_path = project_root / "rag_history" / "rag_history.jsonl"
 
-    # ===== NEW: Ensure all RAG files are downloaded =====
+    # ===== ENHANCED: Ensure all RAG files are downloaded (with error handling) =====
     ensure_rag_files(project_root)
 
     try:
         resources = load_rag_resources(project_root)
     except Exception as e:
-        st.error(str(e))
+        st.error(f"Failed to load RAG resources: {e}")
         st.stop()
 
     # state
