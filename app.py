@@ -3,6 +3,7 @@
 Streamlit UI for your RAG (FAISS + Ollama llama3:8b) with:
 ✅ Ask question -> Top chunks -> Answer (identical to CLI script)
 ✅ Saves history to PROJECT_ROOT/rag_history/rag_history.jsonl
+✅ Auto‑downloads missing RAG files from Google Drive
 
 UI extras added (NO change to RAG functionality):
 ✅ Fixed-height scrollable chat box
@@ -32,6 +33,49 @@ try:
 except ImportError:
     st.error("sentence-transformers not installed. Run: pip install sentence-transformers")
     raise
+
+# =========================
+# GOOGLE DRIVE FILE IDS (added)
+# =========================
+GDRIVE_FILES = {
+    "embeddings/chunks.faiss": "1flfJduhFT-4L55Qcmv3oryRG2XjxWH3p",
+    "embeddings/chunks_meta.jsonl": "1fQ1jusaTl5TdiDxLyQk_KEppTETqvfKa",
+    "chunks/all_chunks.jsonl": "1E02LM5rQSPidI_RKfX0Zm55-1r9jaoSh",
+}
+
+
+# =========================
+# DOWNLOAD HELPER (added)
+# =========================
+def download_from_gdrive(file_id: str, dest_path: Path) -> None:
+    """Download a file from Google Drive using gdown."""
+    try:
+        import gdown
+    except ImportError:
+        st.error(
+            "The 'gdown' library is required to download files from Google Drive.\n"
+            "Please install it with: pip install gdown"
+        )
+        raise
+
+    # Ensure parent directory exists
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    url = f"https://drive.google.com/uc?id={file_id}"
+    with st.spinner(f"Downloading {dest_path.name} ..."):
+        gdown.download(url, str(dest_path), quiet=False)
+
+
+def ensure_rag_files(project_root: Path) -> None:
+    """Check if all required RAG files exist; download missing ones from Google Drive."""
+    for rel_path, file_id in GDRIVE_FILES.items():
+        full_path = project_root / rel_path
+        if not full_path.exists():
+            st.info(f"Missing {rel_path} – downloading from Google Drive...")
+            download_from_gdrive(file_id, full_path)
+        else:
+            # Optional: you could add a size check here, but for now just pass
+            pass
 
 
 # =========================
@@ -243,7 +287,7 @@ def ollama_generate(prompt: str) -> str:
 
 
 # =========================
-# LOAD RESOURCES (CACHED)
+# LOAD RESOURCES (CACHED) – now assumes files already exist (thanks to ensure_rag_files)
 # =========================
 @st.cache_resource(show_spinner=True)
 def load_rag_resources(project_root: Path):
@@ -254,13 +298,7 @@ def load_rag_resources(project_root: Path):
     meta_path = emb_dir / "chunks_meta.jsonl"
     chunks_path = chunks_dir / "all_chunks.jsonl"
 
-    if not index_path.exists():
-        raise FileNotFoundError(f"FAISS index not found: {index_path}")
-    if not meta_path.exists():
-        raise FileNotFoundError(f"Meta JSONL not found: {meta_path}")
-    if not chunks_path.exists():
-        raise FileNotFoundError(f"Chunks JSONL not found: {chunks_path}")
-
+    # At this point the files should exist (downloaded earlier)
     index = faiss.read_index(str(index_path))
     meta_rows = list(iter_jsonl(meta_path))
     chunk_text = load_chunks_text_map(chunks_path)
@@ -554,6 +592,9 @@ def main():
     script_dir = Path(__file__).resolve().parent
     project_root = find_project_root(script_dir)
     history_path = project_root / "rag_history" / "rag_history.jsonl"
+
+    # ===== NEW: Ensure all RAG files are downloaded =====
+    ensure_rag_files(project_root)
 
     try:
         resources = load_rag_resources(project_root)
